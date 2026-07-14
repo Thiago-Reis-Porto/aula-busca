@@ -744,13 +744,13 @@ function DecisionTable({ rows }: { rows: Array<[string, string]> }) {
 }
 
 function ExerciseCard({
-  title = 'Minimize Rastrigin em 10 dimensões',
+  title = 'Resolva caixeiro viajante ou mochila 0/1',
   text = 'Compare dois algoritmos com o mesmo orçamento de avaliações.',
   items = [
     'implementar do zero',
     'plotar melhor valor por avaliação',
     'comparar com random search',
-    'discutir mínimos locais e sensibilidade',
+    'discutir representação, vizinhança e sensibilidade',
   ],
   link = demoLinks.exercise,
   linkLabel = 'Ver enunciado no app',

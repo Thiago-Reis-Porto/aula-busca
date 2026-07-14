@@ -194,11 +194,12 @@ Mostre a ideia de orçamento:
 
 Proponha a tarefa:
 
-> Implementem do zero um algoritmo de busca para minimizar uma função complexa.
+> Implementem do zero um algoritmo de busca para resolver um problema discreto.
 
 Sugestão principal:
 
-- Função de Rastrigin em 10 dimensões.
+- Caixeiro viajante com 10 a 15 cidades.
+- Alternativa: mochila 0/1 com capacidade limitada.
 - Comparar pelo menos dois métodos:
   - busca aleatória;
   - busca local;

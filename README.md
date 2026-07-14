@@ -71,8 +71,8 @@ canvas WebGL não está vazio.
 3. **Mínimos**: mudar ponto inicial e taxa de aprendizado para mostrar mínimos locais.
 4. **Espaço 3D**: discutir por que visualizar duas dimensões não resolve problemas reais.
 5. **Algoritmos**: comparar busca aleatória, descida local, tabu e genético.
-6. **Exercício**: implementar do zero uma busca para Rastrigin em 10 dimensões ou para
-   hiperparâmetros de um modelo simples.
+6. **Exercício**: implementar do zero uma busca para caixeiro viajante, mochila 0/1
+   ou hiperparâmetros de um modelo simples.
 
 ## Stack
 

@@ -415,7 +415,8 @@ a {
 }
 
 .search-visual .search-canvas {
-  flex: 1 1 auto;
+  height: clamp(430px, 42vw, 590px);
+  flex: 0 0 auto;
 }
 
 .metric-strip {
@@ -804,6 +805,10 @@ a {
   .search-canvas,
   .tall-canvas {
     min-height: 360px;
+  }
+
+  .search-visual .search-canvas {
+    height: 360px;
   }
 
   .surface-host {

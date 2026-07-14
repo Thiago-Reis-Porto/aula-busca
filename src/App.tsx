@@ -33,8 +33,27 @@ type Point = {
   y: number;
 };
 
-type SearchPoint = Point & {
+type RouteSolution = {
+  order: number[];
   value: number;
+};
+
+type RouteMove = {
+  i: number;
+  j: number;
+  cityA: number;
+  cityB: number;
+};
+
+type TspCity = Point & {
+  label: string;
+};
+
+type MapViewport = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 };
 
 type AlgorithmId = 'random' | 'hill' | 'tabu' | 'genetic';
@@ -42,16 +61,16 @@ type AlgorithmId = 'random' | 'hill' | 'tabu' | 'genetic';
 type SearchState = {
   algorithm: AlgorithmId;
   step: number;
-  current: SearchPoint;
-  population: SearchPoint[];
-  best: SearchPoint;
-  path: SearchPoint[];
+  current: RouteSolution;
+  population: RouteSolution[];
+  best: RouteSolution;
   tabu: string[];
-  tabuPoints: SearchPoint[];
-  previous: SearchPoint | null;
-  radius: number;
-  parents: SearchPoint[];
-  elite: SearchPoint[];
+  tabuMoves: RouteMove[];
+  previous: RouteSolution | null;
+  activeMove: RouteMove | null;
+  mutationRate: number;
+  parents: RouteSolution[];
+  elite: RouteSolution[];
 };
 
 const regressionData: Point[] = [
@@ -120,37 +139,51 @@ const algorithmDetails: Record<
 > = {
   random: {
     name: 'Busca aleatória',
-    short: 'Explora sem memória e cria uma base simples de comparação.',
+    short: 'Sorteia rotas completas e guarda o menor ciclo encontrado.',
     color: '#2d6cdf',
-    lesson: 'Boa para começar: surpreende em espaços grandes quando poucas avaliações cabem no orçamento.',
-    flow: ['Sorteia lote', 'Avalia todos', 'Guarda melhor'],
+    lesson: 'Boa linha de base: mesmo sem inteligência, mostra o tamanho do espaço de permutações.',
+    flow: ['Sorteia rotas', 'Mede distância', 'Guarda menor'],
   },
   hill: {
     name: 'Subida/descida local',
-    short: 'Move para vizinhos melhores e para quando a vizinhança não ajuda.',
+    short: 'Troca dois trechos da rota e aceita só quando encurta o caminho.',
     color: '#00a676',
-    lesson: 'Rápida e barata, mas tende a aceitar o mínimo local como se fosse a solução.',
-    flow: ['Olha vizinhos', 'Aceita melhora', 'Encolhe o passo'],
+    lesson: 'No caixeiro viajante, a busca local melhora rápido com 2-opt, mas pode travar numa rota que parece boa.',
+    flow: ['Testa 2-opt', 'Aceita melhora', 'Repete local'],
   },
   tabu: {
     name: 'Busca tabu',
-    short: 'Mantém uma memória curta de regiões já visitadas.',
+    short: 'Permite piorar temporariamente e bloqueia trocas recentes.',
     color: '#f7b32b',
-    lesson: 'A memória permite escapar de ciclos e atravessar regiões temporariamente piores.',
-    flow: ['Marca visitados', 'Bloqueia retorno', 'Segue melhor permitido'],
+    lesson: 'A memória curta evita desfazer a mesma troca e ajuda a atravessar rotas intermediárias piores.',
+    flow: ['Marca troca', 'Evita retorno', 'Segue permitido'],
   },
   genetic: {
     name: 'Algoritmo genético',
-    short: 'Evolui uma população por seleção, cruzamento e mutação.',
+    short: 'Evolui uma população de rotas por seleção, crossover e mutação.',
     color: '#f25f5c',
-    lesson: 'Explora várias hipóteses ao mesmo tempo e lida bem com superfícies irregulares.',
-    flow: ['Seleciona elite', 'Cruza pais', 'Muta filhos'],
+    lesson: 'A população mantém rotas diferentes competindo, útil quando boas partes de caminhos podem ser recombinadas.',
+    flow: ['Seleciona elite', 'Cruza rotas', 'Muta trechos'],
   },
 };
 
 const regressionBest = linearFit(regressionData);
 const curveDomain = { min: -4.5, max: 4.5 };
-const searchDomain = { min: -5.12, max: 5.12 };
+const tspCities: TspCity[] = [
+  { label: 'A', x: 0.12, y: 0.28 },
+  { label: 'B', x: 0.25, y: 0.13 },
+  { label: 'C', x: 0.44, y: 0.2 },
+  { label: 'D', x: 0.63, y: 0.1 },
+  { label: 'E', x: 0.84, y: 0.22 },
+  { label: 'F', x: 0.75, y: 0.43 },
+  { label: 'G', x: 0.9, y: 0.66 },
+  { label: 'H', x: 0.61, y: 0.78 },
+  { label: 'I', x: 0.42, y: 0.68 },
+  { label: 'J', x: 0.2, y: 0.82 },
+  { label: 'K', x: 0.09, y: 0.56 },
+  { label: 'L', x: 0.36, y: 0.45 },
+];
+const tspOptimalSolution = solveTspExactly(tspCities);
 const surfaceBumps = [
   { x: -2.85, z: -2.05, height: 26, widthX: 0.55, widthZ: 0.95, angle: -0.45 },
   { x: 2.2, z: -1.75, height: 21, widthX: 1.05, widthZ: 0.48, angle: 0.7 },
@@ -693,9 +726,9 @@ function AlgorithmLab() {
     <section className="lesson-section band-soft" id="algoritmos">
       <div className="section-inner">
         <SectionHeader
-          kicker="4. Estratégias usadas na prática"
-          title="Cada algoritmo troca exploração, memória e custo"
-          text="A mesma função objetivo pode favorecer estratégias diferentes. O laboratório usa uma superfície com muitos mínimos locais parecida com problemas de ajuste de hiperparâmetros."
+          kicker="4. Caixeiro viajante"
+          title="Algoritmos procurando a menor rota"
+          text="O objetivo é visitar cada cidade uma vez e voltar ao início. O espaço de busca são permutações: com 12 cidades já existem 11! rotas possíveis."
         />
 
         <div className="algorithm-selector" role="tablist" aria-label="Algoritmos de busca">
@@ -715,14 +748,15 @@ function AlgorithmLab() {
 
         <div className="lab-grid">
           <div className="visual-panel search-visual">
-            <canvas ref={canvasRef} className="canvas search-canvas" aria-label="Espaço de busca 2D" />
+            <canvas ref={canvasRef} className="canvas search-canvas" aria-label="Mapa do problema do caixeiro viajante" />
             <AlgorithmLegend algorithm={algorithm} />
           </div>
 
           <div className="control-panel">
             <div className="metric-strip">
               <Metric label="iteração" value={String(state.step)} />
-              <Metric label="melhor valor" value={state.best.value.toFixed(3)} />
+              <Metric label="melhor rota" value={formatRouteLength(state.best.value)} />
+              <Metric label="ótimo exato" value={formatRouteLength(tspOptimalSolution.value)} />
             </div>
             <div className="algorithm-current" style={{ borderColor: details.color }}>
               <h3>{details.name}</h3>
@@ -757,24 +791,24 @@ function AlgorithmLab() {
 
         <div className="algorithm-cards">
           <AlgorithmCard
-            title="Grade"
-            text="Testa combinações pré-definidas. Simples, mas cresce exponencialmente."
+            title="Representação"
+            text="Uma solução é uma permutação das cidades; a função objetivo é o comprimento do ciclo."
           />
           <AlgorithmCard
-            title="Aleatória"
-            text="Amostra pontos independentes. Forte quando há poucas avaliações disponíveis."
+            title="Vizinhança 2-opt"
+            text="Inverte um trecho da rota para remover cruzamentos e encurtar o caminho."
           />
           <AlgorithmCard
             title="Tabu"
-            text="Usa memória para evitar ciclos e revisitas recentes."
+            text="Guarda trocas recentes para não desfazer imediatamente a decisão anterior."
           />
           <AlgorithmCard
-            title="Genético"
-            text="Mantém diversidade por população, cruzamento e mutação."
+            title="Crossover"
+            text="Combina a ordem de duas rotas tentando preservar bons blocos de cidades."
           />
           <AlgorithmCard
-            title="Bayesiana"
-            text="Aprende um modelo substituto para escolher a próxima avaliação."
+            title="Mochila"
+            text="Outro exemplo visual: escolher itens sob capacidade, maximizando valor."
           />
         </div>
       </div>
@@ -839,54 +873,54 @@ function AlgorithmLegend({ algorithm }: { algorithm: AlgorithmId }) {
 function algorithmReadout(state: SearchState) {
   if (state.algorithm === 'random') {
     return [
-      { label: 'avaliados agora', value: String(state.population.length) },
-      { label: 'decisão', value: 'melhor do lote' },
-      { label: 'memória', value: 'só o melhor' },
+      { label: 'rotas sorteadas', value: String(state.population.length) },
+      { label: 'rota atual', value: formatRouteLength(state.current.value) },
+      { label: 'gap', value: formatGap(state.best.value) },
     ];
   }
 
   if (state.algorithm === 'hill') {
-    const moved = state.previous ? distance(state.previous, state.current) : 0;
+    const improved = state.previous ? state.current.value < state.previous.value - 0.01 : false;
     return [
-      { label: 'vizinhos', value: String(state.population.length) },
-      { label: 'raio local', value: state.radius.toFixed(2) },
-      { label: 'movimento', value: moved > 0.03 ? moved.toFixed(2) : 'parou' },
+      { label: 'vizinhos 2-opt', value: String(state.population.length) },
+      { label: 'rota atual', value: formatRouteLength(state.current.value) },
+      { label: 'movimento', value: improved ? 'aceitou' : 'travou' },
     ];
   }
 
   if (state.algorithm === 'tabu') {
     return [
       { label: 'candidatos', value: String(state.population.length) },
-      { label: 'memória tabu', value: String(state.tabuPoints.length) },
-      { label: 'regra', value: 'evitar retorno' },
+      { label: 'memória tabu', value: String(state.tabuMoves.length) },
+      { label: 'troca ativa', value: state.activeMove ? formatMove(state.activeMove) : '-' },
     ];
   }
 
   return [
     { label: 'população', value: String(state.population.length) },
     { label: 'elite', value: String(state.elite.length) },
-    { label: 'mutação', value: state.radius.toFixed(2) },
+    { label: 'mutação', value: `${Math.round(state.mutationRate * 100)}%` },
   ];
 }
 
 function algorithmLegendItems(algorithm: AlgorithmId) {
   const base = [
-    { label: 'alvo global', kind: 'target' },
-    { label: 'melhor até agora', kind: 'best' },
+    { label: 'ótimo exato', kind: 'target' },
+    { label: 'melhor rota', kind: 'best' },
   ];
 
   if (algorithm === 'hill') {
     return [
-      { label: 'vizinhos testados', kind: 'algorithm' },
-      { label: 'raio local', kind: 'radius' },
+      { label: 'rota atual', kind: 'algorithm' },
+      { label: 'troca 2-opt', kind: 'radius' },
       ...base,
     ];
   }
 
   if (algorithm === 'tabu') {
     return [
-      { label: 'candidatos permitidos', kind: 'algorithm' },
-      { label: 'regiões tabu', kind: 'tabu' },
+      { label: 'rota permitida', kind: 'algorithm' },
+      { label: 'trocas tabu', kind: 'tabu' },
       ...base,
     ];
   }
@@ -894,12 +928,12 @@ function algorithmLegendItems(algorithm: AlgorithmId) {
   if (algorithm === 'genetic') {
     return [
       { label: 'filhos', kind: 'algorithm' },
-      { label: 'elite e pais', kind: 'elite' },
+      { label: 'pais e elite', kind: 'elite' },
       ...base,
     ];
   }
 
-  return [{ label: 'amostras sorteadas', kind: 'algorithm' }, ...base];
+  return [{ label: 'rotas sorteadas', kind: 'algorithm' }, ...base];
 }
 
 function ExerciseSection() {
@@ -914,13 +948,13 @@ function ExerciseSection() {
           />
           <div className="exercise-brief">
             <p>
-              Problema sugerido: minimize a função de Rastrigin em 10 dimensões. Compare pelo menos
-              dois métodos, por exemplo busca aleatória e busca tabu, usando o mesmo orçamento de
-              avaliações.
+              Problema sugerido: resolva uma instância pequena do caixeiro viajante com 10 a 15
+              cidades. Compare pelo menos dois métodos, por exemplo busca aleatória e busca tabu,
+              usando o mesmo orçamento de avaliações.
             </p>
             <p>
-              Extensão para IA: substituir a função sintética por validação de hiperparâmetros de
-              um modelo simples, como k-NN, árvore de decisão ou MLP pequeno.
+              Alternativa discreta: problema da mochila 0/1, escolhendo itens sob uma capacidade
+              máxima e maximizando o valor total.
             </p>
           </div>
         </div>
@@ -1269,193 +1303,224 @@ function drawMinima(
 }
 
 function drawSearchSpace(ctx: CanvasRenderingContext2D, width: number, height: number, state: SearchState) {
-  clearCanvas(ctx, width, height, '#17201d');
-  const side = Math.min(width, height);
-  const offsetX = (width - side) / 2;
-  const offsetY = (height - side) / 2;
-  const cells = 108;
-  const cell = side / cells;
+  clearCanvas(ctx, width, height, '#111a17');
+  const viewport = createMapViewport(width, height);
   const color = algorithmDetails[state.algorithm].color;
 
-  for (let row = 0; row < cells; row += 1) {
-    for (let col = 0; col < cells; col += 1) {
-      const point = canvasToSearch(offsetX + (col + 0.5) * cell, offsetY + (row + 0.5) * cell, side, offsetX, offsetY);
-      const value = objective2D(point.x, point.y);
-      ctx.fillStyle = heatColor(clamp(value / 82, 0, 1));
-      ctx.fillRect(offsetX + col * cell, offsetY + row * cell, cell + 0.5, cell + 0.5);
-    }
-  }
-
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(offsetX, offsetY, side, side);
+  drawTspBackground(ctx, viewport);
+  drawRoute(ctx, viewport, tspOptimalSolution, 'rgba(0, 166, 118, 0.38)', 2, [8, 8]);
+  drawRoutePopulation(ctx, viewport, state, color);
 
   if (state.algorithm === 'tabu') {
-    drawTabuMemory(ctx, side, offsetX, offsetY, state.tabuPoints);
+    drawTabuMemory(ctx, viewport, state.tabuMoves);
   }
 
-  if (state.algorithm === 'hill') {
-    const center = state.previous ?? state.current;
-    const canvasPoint = searchToCanvas(center, side, offsetX, offsetY);
-    const radius = (state.radius / (searchDomain.max - searchDomain.min)) * side;
-    ctx.save();
-    ctx.setLineDash([7, 7]);
-    ctx.strokeStyle = hexToRgba(color, 0.82);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(canvasPoint.x, canvasPoint.y, radius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+  if ((state.algorithm === 'hill' || state.algorithm === 'tabu') && state.previous && state.activeMove) {
+    drawTwoOptMove(ctx, viewport, state.previous, state.activeMove, color);
   }
 
   if (state.algorithm === 'genetic' && state.parents.length === 2) {
-    drawGeneticParents(ctx, side, offsetX, offsetY, state.parents, bestOf(state.population), color);
+    drawGeneticParents(ctx, viewport, state.parents, color);
   }
 
-  if (state.path.length > 1) {
-    drawSearchPath(ctx, side, offsetX, offsetY, state.path);
+  if (state.previous && state.previous.value !== state.current.value) {
+    drawRoute(ctx, viewport, state.previous, 'rgba(255, 253, 248, 0.18)', 1.4, [4, 8]);
   }
 
-  drawSearchPopulation(ctx, side, offsetX, offsetY, state, color);
-
-  const best = searchToCanvas(state.best, side, offsetX, offsetY);
-  drawStar(ctx, best.x, best.y, 10, 4.6, '#ffffff', '#18201d');
-
-  const global = searchToCanvas({ x: 0, y: 0 }, side, offsetX, offsetY);
-  ctx.strokeStyle = '#00a676';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(global.x - 10, global.y);
-  ctx.lineTo(global.x + 10, global.y);
-  ctx.moveTo(global.x, global.y - 10);
-  ctx.lineTo(global.x, global.y + 10);
-  ctx.stroke();
-
-  const current = searchToCanvas(state.current, side, offsetX, offsetY);
-  drawCircle(ctx, current.x, current.y, 6.4, color, '#ffffff', 2);
+  drawRoute(ctx, viewport, state.best, 'rgba(255, 255, 255, 0.96)', 4.2);
+  drawRoute(ctx, viewport, state.current, hexToRgba(color, 0.94), 2.5);
+  drawCities(ctx, viewport);
 
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.font = '12px Inter, system-ui, sans-serif';
-  ctx.fillText('função objetivo 2D: verde = baixo custo, vermelho = alto custo', offsetX + 14, offsetY + 22);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('caixeiro viajante: menor ciclo fechado', viewport.left + 14, viewport.top + 24);
 }
 
-function drawSearchPath(
-  ctx: CanvasRenderingContext2D,
-  side: number,
-  offsetX: number,
-  offsetY: number,
-  path: SearchPoint[],
-) {
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.78)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  path.forEach((point, index) => {
-    const canvasPoint = searchToCanvas(point, side, offsetX, offsetY);
-    if (index === 0) {
-      ctx.moveTo(canvasPoint.x, canvasPoint.y);
-    } else {
-      ctx.lineTo(canvasPoint.x, canvasPoint.y);
-    }
-  });
-  ctx.stroke();
+function createMapViewport(width: number, height: number): MapViewport {
+  const inset = 18;
 
-  const previous = path[path.length - 2];
-  const current = path[path.length - 1];
-  if (previous && current && distance(previous, current) > 0.04) {
-    const from = searchToCanvas(previous, side, offsetX, offsetY);
-    const to = searchToCanvas(current, side, offsetX, offsetY);
-    drawArrow(ctx, from.x, from.y, to.x, to.y, 'rgba(255, 255, 255, 0.9)', 2);
+  return {
+    left: inset,
+    top: inset,
+    width: Math.max(1, width - inset * 2),
+    height: Math.max(1, height - inset * 2),
+  };
+}
+
+function drawTspBackground(ctx: CanvasRenderingContext2D, viewport: MapViewport) {
+  const gradient = ctx.createLinearGradient(0, viewport.top, viewport.width, viewport.top + viewport.height);
+  gradient.addColorStop(0, '#182721');
+  gradient.addColorStop(0.54, '#13201c');
+  gradient.addColorStop(1, '#0f1715');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(viewport.left, viewport.top, viewport.width, viewport.height);
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  for (let index = 1; index <= 5; index += 1) {
+    const x = viewport.left + (viewport.width * index) / 6;
+    const y = viewport.top + (viewport.height * index) / 6;
+    ctx.beginPath();
+    ctx.moveTo(x, viewport.top);
+    ctx.lineTo(x, viewport.top + viewport.height);
+    ctx.moveTo(viewport.left, y);
+    ctx.lineTo(viewport.left + viewport.width, y);
+    ctx.stroke();
   }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.026)';
+  ctx.lineWidth = 0.9;
+  for (let from = 0; from < tspCities.length; from += 1) {
+    for (let to = from + 1; to < tspCities.length; to += 1) {
+      const a = cityToCanvas(tspCities[from], viewport);
+      const b = cityToCanvas(tspCities[to], viewport);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.36)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(viewport.left, viewport.top, viewport.width, viewport.height);
 }
 
-function drawSearchPopulation(
+function drawRoutePopulation(
   ctx: CanvasRenderingContext2D,
-  side: number,
-  offsetX: number,
-  offsetY: number,
+  viewport: MapViewport,
   state: SearchState,
   color: string,
 ) {
-  if (state.algorithm === 'genetic') {
-    state.elite.forEach((point) => {
-      const canvasPoint = searchToCanvas(point, side, offsetX, offsetY);
-      drawCircle(ctx, canvasPoint.x, canvasPoint.y, 6.3, 'rgba(255, 255, 255, 0.12)', '#ffffff', 1.5);
-    });
-  }
+  const routeCount = state.algorithm === 'genetic' ? 8 : 5;
+  const routes = topRoutes(state.population, routeCount);
 
-  state.population.forEach((point) => {
-    const canvasPoint = searchToCanvas(point, side, offsetX, offsetY);
-    if (state.algorithm === 'random') {
-      drawCircle(ctx, canvasPoint.x, canvasPoint.y, 4.9, hexToRgba(color, 0.78));
-      return;
-    }
-
-    if (state.algorithm === 'genetic') {
-      drawCircle(ctx, canvasPoint.x, canvasPoint.y, 3.8, hexToRgba(color, 0.66));
-      return;
-    }
-
-    drawCircle(ctx, canvasPoint.x, canvasPoint.y, 4.7, 'rgba(255,255,255,0.08)', hexToRgba(color, 0.9), 1.5);
+  routes.forEach((route, index) => {
+    const alpha = state.algorithm === 'genetic' ? 0.09 + index * 0.012 : 0.08;
+    drawRoute(ctx, viewport, route, hexToRgba(color, alpha), 1.2);
   });
 
   if (state.algorithm === 'genetic') {
-    topPoints(state.population, 6).forEach((point) => {
-      const canvasPoint = searchToCanvas(point, side, offsetX, offsetY);
-      drawCircle(ctx, canvasPoint.x, canvasPoint.y, 5.6, 'rgba(255, 255, 255, 0.05)', '#ffffff', 1.4);
+    state.elite.slice(0, 4).forEach((route) => {
+      drawRoute(ctx, viewport, route, 'rgba(255,255,255,0.16)', 1.6, [2, 7]);
     });
   }
 }
 
-function drawTabuMemory(
+function drawRoute(
   ctx: CanvasRenderingContext2D,
-  side: number,
-  offsetX: number,
-  offsetY: number,
-  tabuPoints: SearchPoint[],
+  viewport: MapViewport,
+  route: RouteSolution,
+  stroke: string,
+  lineWidth: number,
+  dash: number[] = [],
 ) {
-  const square = Math.max(16, (0.52 / (searchDomain.max - searchDomain.min)) * side);
+  if (route.order.length < 2) {
+    return;
+  }
+
   ctx.save();
-  ctx.setLineDash([4, 4]);
-  tabuPoints.forEach((point, index) => {
-    const canvasPoint = searchToCanvas(point, side, offsetX, offsetY);
-    const alpha = 0.1 + (index / Math.max(1, tabuPoints.length - 1)) * 0.2;
-    ctx.fillStyle = `rgba(247, 179, 43, ${alpha})`;
-    ctx.strokeStyle = 'rgba(247, 179, 43, 0.72)';
-    ctx.lineWidth = 1.2;
-    ctx.fillRect(canvasPoint.x - square / 2, canvasPoint.y - square / 2, square, square);
-    ctx.strokeRect(canvasPoint.x - square / 2, canvasPoint.y - square / 2, square, square);
+  ctx.setLineDash(dash);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  route.order.forEach((cityIndex, index) => {
+    const point = cityToCanvas(tspCities[cityIndex], viewport);
+    if (index === 0) {
+      ctx.moveTo(point.x, point.y);
+    } else {
+      ctx.lineTo(point.x, point.y);
+    }
   });
+  const start = cityToCanvas(tspCities[route.order[0]], viewport);
+  ctx.lineTo(start.x, start.y);
+  ctx.stroke();
   ctx.restore();
+}
+
+function drawTwoOptMove(
+  ctx: CanvasRenderingContext2D,
+  viewport: MapViewport,
+  previous: RouteSolution,
+  move: RouteMove,
+  color: string,
+) {
+  const order = previous.order;
+  const before = order[move.i - 1];
+  const first = order[move.i];
+  const second = order[move.j];
+  const after = order[(move.j + 1) % order.length];
+
+  drawCityEdge(ctx, viewport, before, first, 'rgba(242, 95, 92, 0.78)', 2.3, [6, 5]);
+  drawCityEdge(ctx, viewport, second, after, 'rgba(242, 95, 92, 0.78)', 2.3, [6, 5]);
+  drawCityEdge(ctx, viewport, before, second, hexToRgba(color, 0.94), 3.1);
+  drawCityEdge(ctx, viewport, first, after, hexToRgba(color, 0.94), 3.1);
+}
+
+function drawTabuMemory(ctx: CanvasRenderingContext2D, viewport: MapViewport, moves: RouteMove[]) {
+  moves.forEach((move, index) => {
+    const alpha = 0.1 + (index / Math.max(1, moves.length - 1)) * 0.22;
+    drawCityEdge(ctx, viewport, move.cityA, move.cityB, `rgba(247, 179, 43, ${alpha})`, 4, [3, 8]);
+  });
 }
 
 function drawGeneticParents(
   ctx: CanvasRenderingContext2D,
-  side: number,
-  offsetX: number,
-  offsetY: number,
-  parents: SearchPoint[],
-  child: SearchPoint,
+  viewport: MapViewport,
+  parents: RouteSolution[],
   color: string,
 ) {
-  const first = searchToCanvas(parents[0], side, offsetX, offsetY);
-  const second = searchToCanvas(parents[1], side, offsetX, offsetY);
-  const offspring = searchToCanvas(child, side, offsetX, offsetY);
-  const midX = (first.x + second.x) / 2;
-  const midY = (first.y + second.y) / 2;
+  drawRoute(ctx, viewport, parents[0], 'rgba(255,255,255,0.24)', 2, [6, 7]);
+  drawRoute(ctx, viewport, parents[1], hexToRgba(color, 0.28), 2, [3, 8]);
+}
 
+function drawCityEdge(
+  ctx: CanvasRenderingContext2D,
+  viewport: MapViewport,
+  from: number,
+  to: number,
+  stroke: string,
+  lineWidth: number,
+  dash: number[] = [],
+) {
+  const start = cityToCanvas(tspCities[from], viewport);
+  const end = cityToCanvas(tspCities[to], viewport);
   ctx.save();
-  ctx.setLineDash([7, 5]);
-  ctx.strokeStyle = hexToRgba(color, 0.72);
-  ctx.lineWidth = 2;
+  ctx.setLineDash(dash);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(first.x, first.y);
-  ctx.lineTo(second.x, second.y);
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
   ctx.stroke();
   ctx.restore();
+}
 
-  drawCircle(ctx, first.x, first.y, 7, 'rgba(255, 255, 255, 0.08)', '#ffffff', 1.8);
-  drawCircle(ctx, second.x, second.y, 7, 'rgba(255, 255, 255, 0.08)', '#ffffff', 1.8);
-  drawArrow(ctx, midX, midY, offspring.x, offspring.y, hexToRgba(color, 0.9), 2);
+function drawCities(ctx: CanvasRenderingContext2D, viewport: MapViewport) {
+  tspCities.forEach((city, index) => {
+    const point = cityToCanvas(city, viewport);
+    const isDepot = index === 0;
+    drawCircle(ctx, point.x, point.y, isDepot ? 11 : 8, isDepot ? '#f7b32b' : '#fffdf8', '#17201d', 2.4);
+    ctx.fillStyle = '#17201d';
+    ctx.font = `800 ${isDepot ? 12 : 11}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(city.label, point.x, point.y + 0.4);
+  });
+}
+
+function cityToCanvas(city: Point, viewport: MapViewport) {
+  return {
+    x: viewport.left + city.x * viewport.width,
+    y: viewport.top + city.y * viewport.height,
+  };
 }
 
 function drawCircle(
@@ -1477,35 +1542,6 @@ function drawCircle(
     ctx.lineWidth = lineWidth;
     ctx.stroke();
   }
-}
-
-function drawStar(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  outerRadius: number,
-  innerRadius: number,
-  fill: string,
-  stroke: string,
-) {
-  ctx.beginPath();
-  for (let index = 0; index < 10; index += 1) {
-    const radius = index % 2 === 0 ? outerRadius : innerRadius;
-    const angle = -Math.PI / 2 + (index * Math.PI) / 5;
-    const pointX = x + Math.cos(angle) * radius;
-    const pointY = y + Math.sin(angle) * radius;
-    if (index === 0) {
-      ctx.moveTo(pointX, pointY);
-    } else {
-      ctx.lineTo(pointX, pointY);
-    }
-  }
-  ctx.closePath();
-  ctx.fillStyle = fill;
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = 2;
-  ctx.fill();
-  ctx.stroke();
 }
 
 function drawArrow(
@@ -1709,10 +1745,6 @@ function findLocalMinima(samples: Point[]) {
   return minima;
 }
 
-function objective2D(x: number, y: number) {
-  return 20 + x * x + y * y - 10 * (Math.cos(2 * Math.PI * x) + Math.cos(2 * Math.PI * y));
-}
-
 function surfaceObjective(x: number, z: number, ruggedness: number) {
   const basin =
     34 +
@@ -1751,24 +1783,26 @@ function rotatedGaussian(
 }
 
 function createSearchState(algorithm: AlgorithmId): SearchState {
-  const current = randomSearchPoint();
+  const current = randomRouteSolution();
   const population =
     algorithm === 'genetic'
-      ? Array.from({ length: 30 }, randomSearchPoint)
-      : Array.from({ length: algorithm === 'random' ? 18 : 12 }, randomSearchPoint);
-  const best = bestOf([current, ...population]);
-  const elite = algorithm === 'genetic' ? topPoints(population, 8) : [];
+      ? Array.from({ length: 36 }, randomRouteSolution)
+      : algorithm === 'random'
+        ? Array.from({ length: 24 }, randomRouteSolution)
+        : sampleTwoOptNeighbors(current, 18).map((item) => item.route);
+  const best = bestRoute([current, ...population]);
+  const elite = algorithm === 'genetic' ? topRoutes(population, 8) : [];
   return {
     algorithm,
     step: 0,
     current,
     population,
     best,
-    path: [algorithm === 'genetic' || algorithm === 'random' ? best : current],
     tabu: [],
-    tabuPoints: [],
+    tabuMoves: [],
     previous: null,
-    radius: algorithm === 'genetic' ? mutationRadius(0) : algorithm === 'hill' ? 1.05 : 0.85,
+    activeMove: null,
+    mutationRate: algorithm === 'genetic' ? 0.32 : 0,
     parents: [],
     elite,
   };
@@ -1776,36 +1810,38 @@ function createSearchState(algorithm: AlgorithmId): SearchState {
 
 function stepSearch(state: SearchState): SearchState {
   if (state.algorithm === 'random') {
-    const population = Array.from({ length: 22 }, randomSearchPoint);
-    const best = bestOf([state.best, ...population]);
+    const population = Array.from({ length: 26 }, randomRouteSolution);
+    const current = bestRoute(population);
+    const best = bestRoute([state.best, current]);
     return {
       ...state,
       step: state.step + 1,
-      current: best,
+      current,
       population,
       best,
-      path: appendPath(state.path, best),
       previous: state.current,
+      activeMove: null,
+      tabuMoves: [],
       parents: [],
       elite: [],
     };
   }
 
   if (state.algorithm === 'hill') {
-    const radius = Math.max(0.18, 1.05 * Math.exp(-state.step / 80));
-    const candidates = Array.from({ length: 16 }, () => neighbor(state.current, radius));
-    const winner = bestOf([state.current, ...candidates]);
-    const current = winner.value <= state.current.value ? winner : state.current;
-    const best = bestOf([state.best, current]);
+    const candidates = sampleTwoOptNeighbors(state.current, 22);
+    const winner = bestRouteMove(candidates);
+    const improved = winner.route.value < state.current.value - 0.01;
+    const current = improved ? winner.route : state.current;
+    const best = bestRoute([state.best, current]);
     return {
       ...state,
       step: state.step + 1,
       current,
-      population: candidates,
+      population: candidates.map((item) => item.route),
       best,
-      path: appendPath(state.path, current),
       previous: state.current,
-      radius,
+      activeMove: winner.move,
+      tabuMoves: [],
       parents: [],
       elite: [],
     };
@@ -1813,115 +1849,235 @@ function stepSearch(state: SearchState): SearchState {
 
   if (state.algorithm === 'tabu') {
     const tabuSet = new Set(state.tabu);
-    const candidates = Array.from({ length: 26 }, () => neighbor(state.current, 0.85)).filter(
-      (point) => !tabuSet.has(tabuKey(point)),
-    );
-    const fallback = candidates.length > 0 ? candidates : Array.from({ length: 10 }, randomSearchPoint);
-    const current = bestOf(fallback);
-    const best = bestOf([state.best, current]);
-    const tabu = [...state.tabu, tabuKey(state.current)].slice(-16);
-    const tabuPoints = [...state.tabuPoints, state.current].slice(-16);
+    const candidates = sampleTwoOptNeighbors(state.current, 34);
+    const allowed = candidates.filter((item) => !tabuSet.has(moveKey(item.move)));
+    const pool = allowed.length > 0 ? allowed : candidates;
+    const winner = bestRouteMove(pool);
+    const current = winner.route;
+    const best = bestRoute([state.best, current]);
+    const tabu = [...state.tabu, moveKey(winner.move)].slice(-14);
+    const tabuMoves = [...state.tabuMoves, winner.move].slice(-14);
     return {
       ...state,
       step: state.step + 1,
       current,
-      population: fallback,
+      population: pool.map((item) => item.route),
       best,
-      path: appendPath(state.path, current),
       tabu,
-      tabuPoints,
+      tabuMoves,
       previous: state.current,
-      radius: 0.85,
+      activeMove: winner.move,
       parents: [],
       elite: [],
     };
   }
 
-  const sorted = [...state.population].sort((a, b) => a.value - b.value);
-  const elite = sorted.slice(0, 8);
-  const children: SearchPoint[] = [];
-  const parents: SearchPoint[] = [];
-  while (children.length < 30) {
-    const a = elite[Math.floor(Math.random() * elite.length)];
-    const b = elite[Math.floor(Math.random() * elite.length)];
+  const elite = topRoutes(state.population, 8);
+  const children: RouteSolution[] = [];
+  const parents: RouteSolution[] = [];
+  const mutationRate = Math.max(0.08, 0.32 * Math.exp(-state.step / 160));
+  while (children.length < 32) {
+    const a = elite[randomInt(0, elite.length - 1)];
+    const b = elite[randomInt(0, elite.length - 1)];
     if (parents.length === 0) {
       parents.push(a, b);
     }
-    const mix = Math.random();
-    const mutation = Math.max(0.1, 1.05 * Math.exp(-state.step / 110));
-    children.push(
-      makeSearchPoint(
-        clamp(lerp(a.x, b.x, mix) + randomNormal() * mutation, searchDomain.min, searchDomain.max),
-        clamp(lerp(a.y, b.y, 1 - mix) + randomNormal() * mutation, searchDomain.min, searchDomain.max),
-      ),
-    );
+    let order = orderCrossover(a.order, b.order);
+    if (Math.random() < mutationRate) {
+      order = applyTwoOpt(order, randomTwoOptMove(order));
+    }
+    children.push(makeRouteSolution(order));
   }
-  const best = bestOf([state.best, ...children]);
+  const population = [...elite.slice(0, 4), ...children].slice(0, 36);
+  const current = bestRoute(population);
+  const best = bestRoute([state.best, current]);
   return {
     ...state,
     step: state.step + 1,
-    current: best,
-    population: children,
+    current,
+    population,
     best,
-    path: appendPath(state.path, best),
     previous: state.current,
-    radius: mutationRadius(state.step),
+    activeMove: null,
+    mutationRate,
     parents,
     elite,
   };
 }
 
-function randomSearchPoint() {
-  return makeSearchPoint(randomRange(searchDomain.min, searchDomain.max), randomRange(searchDomain.min, searchDomain.max));
+function solveTspExactly(cities: TspCity[]): RouteSolution {
+  const cityCount = cities.length;
+  const subsetCount = 1 << (cityCount - 1);
+  const costs = Array.from({ length: subsetCount }, () => Array(cityCount).fill(Infinity));
+  const parents = Array.from({ length: subsetCount }, () => Array(cityCount).fill(-1));
+
+  for (let city = 1; city < cityCount; city += 1) {
+    const mask = 1 << (city - 1);
+    costs[mask][city] = cityDistance(cities[0], cities[city]);
+    parents[mask][city] = 0;
+  }
+
+  for (let mask = 1; mask < subsetCount; mask += 1) {
+    for (let last = 1; last < cityCount; last += 1) {
+      if ((mask & (1 << (last - 1))) === 0 || !Number.isFinite(costs[mask][last])) {
+        continue;
+      }
+
+      for (let next = 1; next < cityCount; next += 1) {
+        const bit = 1 << (next - 1);
+        if ((mask & bit) !== 0) {
+          continue;
+        }
+
+        const nextMask = mask | bit;
+        const candidate = costs[mask][last] + cityDistance(cities[last], cities[next]);
+        if (candidate < costs[nextMask][next]) {
+          costs[nextMask][next] = candidate;
+          parents[nextMask][next] = last;
+        }
+      }
+    }
+  }
+
+  const fullMask = subsetCount - 1;
+  let bestLast = 1;
+  let bestValue = Infinity;
+  for (let last = 1; last < cityCount; last += 1) {
+    const candidate = costs[fullMask][last] + cityDistance(cities[last], cities[0]);
+    if (candidate < bestValue) {
+      bestValue = candidate;
+      bestLast = last;
+    }
+  }
+
+  const reversed: number[] = [];
+  let mask = fullMask;
+  let current = bestLast;
+  while (current > 0) {
+    reversed.push(current);
+    const previous = parents[mask][current];
+    mask ^= 1 << (current - 1);
+    current = previous;
+  }
+
+  const order = [0, ...reversed.reverse()];
+  return makeRouteSolution(order, cities);
 }
 
-function makeSearchPoint(x: number, y: number): SearchPoint {
-  return { x, y, value: objective2D(x, y) };
+function randomRouteSolution() {
+  return makeRouteSolution(randomRouteOrder());
 }
 
-function neighbor(point: SearchPoint, radius: number) {
-  return makeSearchPoint(
-    clamp(point.x + randomNormal() * radius, searchDomain.min, searchDomain.max),
-    clamp(point.y + randomNormal() * radius, searchDomain.min, searchDomain.max),
-  );
+function randomRouteOrder() {
+  return [0, ...shuffle(Array.from({ length: tspCities.length - 1 }, (_, index) => index + 1))];
 }
 
-function bestOf(points: SearchPoint[]) {
-  return points.reduce((best, point) => (point.value < best.value ? point : best), points[0]);
+function makeRouteSolution(order: number[], cities = tspCities): RouteSolution {
+  return { order, value: routeDistance(order, cities) };
 }
 
-function topPoints(points: SearchPoint[], count: number) {
-  return [...points].sort((a, b) => a.value - b.value).slice(0, count);
+function routeDistance(order: number[], cities = tspCities) {
+  return order.reduce((sum, cityIndex, index) => {
+    const nextCity = order[(index + 1) % order.length];
+    return sum + cityDistance(cities[cityIndex], cities[nextCity]);
+  }, 0);
 }
 
-function appendPath(path: SearchPoint[], point: SearchPoint) {
-  return [...path, point].slice(-90);
+function cityDistance(a: Point, b: Point) {
+  return Math.hypot(a.x - b.x, a.y - b.y) * 100;
 }
 
-function mutationRadius(step: number) {
-  return Math.max(0.1, 1.05 * Math.exp(-step / 110));
+function sampleTwoOptNeighbors(route: RouteSolution, count: number) {
+  const seen = new Set<string>();
+  const neighbors: Array<{ route: RouteSolution; move: RouteMove }> = [];
+
+  while (neighbors.length < count && seen.size < 160) {
+    const move = randomTwoOptMove(route.order);
+    const key = `${move.i}:${move.j}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    neighbors.push({ route: makeRouteSolution(applyTwoOpt(route.order, move)), move });
+  }
+
+  return neighbors;
 }
 
-function distance(a: Point, b: Point) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function tabuKey(point: SearchPoint) {
-  return `${Math.round(point.x * 2)}:${Math.round(point.y * 2)}`;
-}
-
-function searchToCanvas(point: Point, side: number, offsetX: number, offsetY: number) {
+function randomTwoOptMove(order: number[]): RouteMove {
+  const i = randomInt(1, order.length - 2);
+  const j = randomInt(i + 1, order.length - 1);
   return {
-    x: offsetX + normalize(point.x, searchDomain.min, searchDomain.max) * side,
-    y: offsetY + (1 - normalize(point.y, searchDomain.min, searchDomain.max)) * side,
+    i,
+    j,
+    cityA: order[i],
+    cityB: order[j],
   };
 }
 
-function canvasToSearch(x: number, y: number, side: number, offsetX: number, offsetY: number) {
-  return {
-    x: lerp(searchDomain.min, searchDomain.max, clamp((x - offsetX) / side, 0, 1)),
-    y: lerp(searchDomain.max, searchDomain.min, clamp((y - offsetY) / side, 0, 1)),
-  };
+function applyTwoOpt(order: number[], move: RouteMove) {
+  return [
+    ...order.slice(0, move.i),
+    ...order.slice(move.i, move.j + 1).reverse(),
+    ...order.slice(move.j + 1),
+  ];
+}
+
+function bestRoute(routes: RouteSolution[]) {
+  return routes.reduce((best, route) => (route.value < best.value ? route : best), routes[0]);
+}
+
+function bestRouteMove(items: Array<{ route: RouteSolution; move: RouteMove }>) {
+  return items.reduce((best, item) => (item.route.value < best.route.value ? item : best), items[0]);
+}
+
+function topRoutes(routes: RouteSolution[], count: number) {
+  return [...routes].sort((a, b) => a.value - b.value).slice(0, count);
+}
+
+function moveKey(move: RouteMove) {
+  const a = Math.min(move.cityA, move.cityB);
+  const b = Math.max(move.cityA, move.cityB);
+  return `${a}:${b}`;
+}
+
+function orderCrossover(first: number[], second: number[]) {
+  const start = randomInt(1, first.length - 3);
+  const end = randomInt(start + 1, first.length - 1);
+  const child = Array(first.length).fill(-1);
+  child[0] = 0;
+
+  for (let index = start; index <= end; index += 1) {
+    child[index] = first[index];
+  }
+
+  const used = new Set(child.filter((city) => city >= 0));
+  let insertAt = 1;
+  second.slice(1).forEach((city) => {
+    if (used.has(city)) {
+      return;
+    }
+    while (child[insertAt] !== -1) {
+      insertAt += 1;
+    }
+    child[insertAt] = city;
+    used.add(city);
+  });
+
+  return child;
+}
+
+function formatRouteLength(value: number) {
+  return value.toFixed(1);
+}
+
+function formatGap(value: number) {
+  const gap = ((value / tspOptimalSolution.value) - 1) * 100;
+  return gap < 0.05 ? 'ótimo' : `+${gap.toFixed(1)}%`;
+}
+
+function formatMove(move: RouteMove) {
+  return `${tspCities[move.cityA].label}-${tspCities[move.cityB].label}`;
 }
 
 function heatColor(t: number) {
@@ -1965,14 +2121,17 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function randomRange(min: number, max: number) {
-  return min + Math.random() * (max - min);
+function randomInt(min: number, max: number) {
+  return Math.floor(min + Math.random() * (max - min + 1));
 }
 
-function randomNormal() {
-  const u = 1 - Math.random();
-  const v = Math.random();
-  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+function shuffle<T>(items: T[]) {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomInt(0, index);
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
 }
 
 function formatSigned(value: number) {
